@@ -12,11 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 )
 
-var (
-	// lock for cloudwatch logs events.
-	logEventsLock sync.Mutex
-)
-
 // create new io.Writer for cloudwatch logs.
 func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string) (*logsWriter, error) {
 	l := &logsWriter{
@@ -25,6 +20,7 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 		streamName:    streamName,
 		sequenceToken: "0",
 		events:        make([]*cloudwatchlogs.InputLogEvent, 0),
+		eventsLock:    &sync.Mutex{},
 	}
 	// create log group if not exists.
 	err := CreateLogGroup(l.service, l.groupName)
@@ -50,11 +46,7 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 	// TODO: must separate this logic.
 	go func() {
 		for _ = range time.Tick(1 * time.Second) {
-			// pop event from queue.
-			logEventsLock.Lock()
-			events := l.events[:]
-			l.events = nil
-			logEventsLock.Unlock()
+			events := l.popAllEvents()
 			// send events if needed.
 			if len(events) < 1 {
 				continue
@@ -67,10 +59,9 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 			}
 			output, err := l.service.PutLogEvents(input)
 			// FIXME: how handle this error?
-			if err != nil {
-				panic(err)
+			if err == nil {
+				l.sequenceToken = *output.NextSequenceToken
 			}
-			l.sequenceToken = *output.NextSequenceToken
 		}
 	}()
 	return l, nil
@@ -83,6 +74,7 @@ type logsWriter struct {
 	streamName    string
 	sequenceToken string
 	events        []*cloudwatchlogs.InputLogEvent
+	eventsLock    *sync.Mutex
 }
 
 // implements `io.Writer` interface.
@@ -92,9 +84,7 @@ func (l *logsWriter) Write(p []byte) (n int, err error) {
 		Timestamp: aws.Int64(time.Now().UTC().UnixNano() / 1000 / 1000),
 		Message:   aws.String(string(p)),
 	}
-	logEventsLock.Lock()
-	l.events = append(l.events, event)
-	logEventsLock.Unlock()
+	l.pushEvent(event)
 	n = len(p)
 	err = nil
 	return
@@ -104,6 +94,22 @@ func (l *logsWriter) Write(p []byte) (n int, err error) {
 func (l *logsWriter) String() string {
 	return fmt.Sprintf("CloudWatchLogger: group=%s stream=%s sequence=%s events=%d",
 		l.groupName, l.streamName, l.sequenceToken, len(l.events))
+}
+
+//
+func (l *logsWriter) pushEvent(event *cloudwatchlogs.InputLogEvent) {
+	l.eventsLock.Lock()
+	defer l.eventsLock.Unlock()
+	l.events = append(l.events, event)
+}
+
+//
+func (l *logsWriter) popAllEvents() []*cloudwatchlogs.InputLogEvent {
+	l.eventsLock.Lock()
+	defer l.eventsLock.Unlock()
+	events := l.events[:]
+	l.events = nil
+	return events
 }
 
 // short hand for create log group.
