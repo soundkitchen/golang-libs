@@ -43,27 +43,7 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 	default:
 		return nil, errors.New("too many streams found.")
 	}
-	// TODO: must separate this logic.
-	go func() {
-		for _ = range time.Tick(1 * time.Second) {
-			events := l.popAllEvents()
-			// send events if needed.
-			if len(events) < 1 {
-				continue
-			}
-			input := &cloudwatchlogs.PutLogEventsInput{
-				LogGroupName:  aws.String(l.groupName),
-				LogStreamName: aws.String(l.streamName),
-				SequenceToken: aws.String(l.sequenceToken),
-				LogEvents:     events,
-			}
-			output, err := l.service.PutLogEvents(input)
-			// FIXME: how handle this error?
-			if err == nil {
-				l.sequenceToken = *output.NextSequenceToken
-			}
-		}
-	}()
+	go l.processEvents(1 * time.Second)
 	return l, nil
 }
 
@@ -110,6 +90,30 @@ func (l *logsWriter) popAllEvents() []*cloudwatchlogs.InputLogEvent {
 	events := l.events[:]
 	l.events = nil
 	return events
+}
+
+//
+func (l *logsWriter) processEvents(d time.Duration) {
+	t := time.NewTicker(d)
+	defer t.Stop()
+	for _ = range t.C {
+		events := l.popAllEvents()
+		// send events if needed.
+		if len(events) < 1 {
+			continue
+		}
+		input := &cloudwatchlogs.PutLogEventsInput{
+			LogGroupName:  aws.String(l.groupName),
+			LogStreamName: aws.String(l.streamName),
+			SequenceToken: aws.String(l.sequenceToken),
+			LogEvents:     events,
+		}
+		output, err := l.service.PutLogEvents(input)
+		// FIXME: how handle this error?
+		if err == nil {
+			l.sequenceToken = *output.NextSequenceToken
+		}
+	}
 }
 
 // short hand for create log group.
