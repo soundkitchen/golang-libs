@@ -21,6 +21,8 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 		sequenceToken: "0",
 		events:        make([]*cloudwatchlogs.InputLogEvent, 0),
 		eventsLock:    &sync.Mutex{},
+		closeSignal:   make(chan bool),
+		closeWaiter:   &sync.WaitGroup{},
 	}
 	// create log group if not exists.
 	err := CreateLogGroup(l.service, l.groupName)
@@ -43,7 +45,8 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 	default:
 		return nil, errors.New("too many streams found.")
 	}
-	go l.processEvents(1 * time.Second)
+	l.closeWaiter.Add(1)
+	go l.processEventsLoop()
 	return l, nil
 }
 
@@ -55,9 +58,11 @@ type logsWriter struct {
 	sequenceToken string
 	events        []*cloudwatchlogs.InputLogEvent
 	eventsLock    *sync.Mutex
+	closeSignal   chan bool
+	closeWaiter   *sync.WaitGroup
 }
 
-// implements `io.Writer` interface.
+// implements `io.WriteCloser` interface.
 func (l *logsWriter) Write(p []byte) (n int, err error) {
 	event := &cloudwatchlogs.InputLogEvent{
 		// need millsecond format.
@@ -70,21 +75,30 @@ func (l *logsWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+// implements `io.WriteCloser` interface.
+func (l *logsWriter) Close() error {
+	close(l.closeSignal)
+	l.closeWaiter.Wait()
+	// flush events.
+	l.sendEvents()
+	return nil
+}
+
 // representation string format.
 func (l *logsWriter) String() string {
 	return fmt.Sprintf("CloudWatchLogger: group=%s stream=%s sequence=%s events=%d",
 		l.groupName, l.streamName, l.sequenceToken, len(l.events))
 }
 
-//
+// push new log event.
 func (l *logsWriter) pushEvent(event *cloudwatchlogs.InputLogEvent) {
 	l.eventsLock.Lock()
 	defer l.eventsLock.Unlock()
 	l.events = append(l.events, event)
 }
 
-//
-func (l *logsWriter) popAllEvents() []*cloudwatchlogs.InputLogEvent {
+// pop log events.
+func (l *logsWriter) popEvents() []*cloudwatchlogs.InputLogEvent {
 	l.eventsLock.Lock()
 	defer l.eventsLock.Unlock()
 	events := l.events[:]
@@ -92,26 +106,39 @@ func (l *logsWriter) popAllEvents() []*cloudwatchlogs.InputLogEvent {
 	return events
 }
 
-//
-func (l *logsWriter) processEvents(d time.Duration) {
-	t := time.NewTicker(d)
+// send events to cloudwatch logs.
+func (l *logsWriter) sendEvents() {
+	events := l.popEvents()
+	// send events if needed.
+	if len(events) < 1 {
+		return
+	}
+	input := &cloudwatchlogs.PutLogEventsInput{
+		LogGroupName:  aws.String(l.groupName),
+		LogStreamName: aws.String(l.streamName),
+		SequenceToken: aws.String(l.sequenceToken),
+		LogEvents:     events,
+	}
+	output, err := l.service.PutLogEvents(input)
+	// FIXME: how handle this error?
+	if err == nil {
+		l.sequenceToken = *output.NextSequenceToken
+	}
+}
+
+// run send event loop.
+func (l *logsWriter) processEventsLoop() {
+	defer l.closeWaiter.Done()
+	t := time.NewTicker(time.Second)
 	defer t.Stop()
-	for _ = range t.C {
-		events := l.popAllEvents()
-		// send events if needed.
-		if len(events) < 1 {
-			continue
-		}
-		input := &cloudwatchlogs.PutLogEventsInput{
-			LogGroupName:  aws.String(l.groupName),
-			LogStreamName: aws.String(l.streamName),
-			SequenceToken: aws.String(l.sequenceToken),
-			LogEvents:     events,
-		}
-		output, err := l.service.PutLogEvents(input)
-		// FIXME: how handle this error?
-		if err == nil {
-			l.sequenceToken = *output.NextSequenceToken
+	for {
+		select {
+		case _, ok := <-l.closeSignal:
+			if !ok {
+				return
+			}
+		case _ = <-t.C:
+			l.sendEvents()
 		}
 	}
 }
