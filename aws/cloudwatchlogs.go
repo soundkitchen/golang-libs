@@ -41,7 +41,10 @@ func NewLogsWriter(p client.ConfigProvider, groupName string, streamName string)
 			return nil, err
 		}
 	case 1:
-		l.sequenceToken = *streams[0].UploadSequenceToken
+		stream := streams[0]
+		if stream.UploadSequenceToken != nil {
+			l.sequenceToken = *stream.UploadSequenceToken
+		}
 	default:
 		return nil, errors.New("too many streams found.")
 	}
