@@ -39,21 +39,21 @@ func SetAttr(o interface{}, name string, value interface{}) error {
 func GetAttr(o interface{}, name string, dst interface{}) error {
 	r := reflect.ValueOf(o)
 	if r.Kind() != reflect.Ptr || r.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("setattr: object must be a pointer to struct.")
+		return fmt.Errorf("getattr: object must be a pointer to struct.")
 	}
 	f := r.Elem().FieldByName(name)
 	if !f.IsValid() {
-		return fmt.Errorf("setattr: no such field %s", name)
+		return fmt.Errorf("getattr: no such field %s", name)
 	}
 	v := reflect.Indirect(reflect.ValueOf(dst))
 	if !v.CanSet() {
-		return fmt.Errorf("setattr: destination unassignable.")
+		return fmt.Errorf("getattr: destination unassignable.")
 	}
 	if f.Kind() == reflect.Ptr {
 		f = reflect.Indirect(f)
 	}
 	if f.Type() != v.Type() {
-		return fmt.Errorf("setattr: field type mismatched. expected %s but actual %s.", f.Type(), v.Type())
+		return fmt.Errorf("getattr: field type mismatched. expected %s but actual %s.", f.Type(), v.Type())
 	}
 	v.Set(f)
 	return nil
