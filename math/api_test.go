@@ -4,22 +4,44 @@ import (
 	"testing"
 )
 
+var positiveNumbers = []interface{}{1, 2.5, 3.14159, 10}
+var negativeNumbers = []interface{}{-10, -5.2, -3.14159, -1}
 var fixtures = []interface{}{-10, 0, 5.5, 100.5}
 
 //
 func TestMax(t *testing.T) {
-	a := Max(fixtures...)
-	if a != 100.5 {
-		t.Fatalf("expected 100.5 but actual %f", a)
-	}
+	t.Run("with positive numbers.", func(t *testing.T) {
+		actual := Max(positiveNumbers...)
+		expected := 10.0
+		if actual != expected {
+			t.Errorf("expected %f but actual %f", expected, actual)
+		}
+	})
+	t.Run("with negative numbers.", func(t *testing.T) {
+		actual := Max(negativeNumbers...)
+		expected := -1.0
+		if actual != expected {
+			t.Errorf("expected %f but actual %f", expected, actual)
+		}
+	})
 }
 
 //
 func TestMin(t *testing.T) {
-	a := Min(fixtures...)
-	if a != -10 {
-		t.Fatalf("expected -10 but actual %f", a)
-	}
+	t.Run("with positive numbers.", func(t *testing.T) {
+		actual := Min(positiveNumbers...)
+		expected := 1.0
+		if actual != expected {
+			t.Errorf("expected %f but actual %f", expected, actual)
+		}
+	})
+	t.Run("with negative numbers.", func(t *testing.T) {
+		actual := Min(negativeNumbers...)
+		expected := -10.0
+		if actual != expected {
+			t.Errorf("expected %f but actual %f", expected, actual)
+		}
+	})
 }
 
 //
